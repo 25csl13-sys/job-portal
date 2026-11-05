@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: job-portal
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: DB_HOST
+        fromService:
+          name: job-portal-db
+          type: pserv
+          property: host
+      - key: DB_NAME
+        value: job_portal
+      - key: DB_USER
+        value: jobportal
+      - key: DB_PASS
+        value: JobPortal2026!
+
+  - type: pserv
+    name: job-portal-db
+    runtime: docker
+    dockerfilePath: ./Dockerfile.db
+    plan: starter
+    disk:
+      name: job-portal-db-data
+      mountPath: /var/lib/mysql
+      sizeGB: 1
+    envVars:
+      - key: MYSQL_DATABASE
+        value: job_portal
+      - key: MYSQL_USER
+        value: jobportal
+      - key: MYSQL_PASSWORD
+        value: JobPortal2026!
+      - key: MYSQL_ROOT_PASSWORD
+        generateValue: true
