@@ -1,17 +1,94 @@
 <?php
 define('BASE', '/');
-$DB_HOST = getenv('DB_HOST') ?: 'localhost';
-$DB_USER = getenv('DB_USER') ?: 'root';
-$DB_PASS = getenv('DB_PASS') ?: '';
-$DB_NAME = getenv('DB_NAME') ?: 'job_portal';
-
 session_start();
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+class SqliteResult {
+    private array $rows;
+    private int $index = 0;
+    public int $num_rows;
+    public function __construct(array $rows) {
+        $this->rows = $rows;
+        $this->num_rows = count($rows);
+    }
+    public function fetch_assoc(): array|false {
+        return $this->index < $this->num_rows ? $this->rows[$this->index++] : false;
+    }
+    public function fetch_row(): array|false {
+        $row = $this->fetch_assoc();
+        return $row === false ? false : array_values($row);
+    }
+    public function fetch_all(int $mode = 1): array {
+        return $this->rows;
+    }
+}
+
+class SqliteStatement {
+    private PDO $pdo;
+    private SqliteConnection $connection;
+    private string $sql;
+    private array $params = [];
+    public function __construct(PDO $pdo, SqliteConnection $connection, string $sql) {
+        $this->pdo = $pdo;
+        $this->connection = $connection;
+        $this->sql = $sql;
+    }
+    public function bind_param(string $types, mixed ...$values): void {
+        $this->params = array_values($values);
+    }
+    public function execute(): bool {
+        $stmt = $this->pdo->prepare(SqliteConnection::translate($this->sql));
+        $result = $stmt->execute($this->params);
+        $this->connection->insert_id = (int)$this->pdo->lastInsertId();
+        return $result;
+    }
+    public function get_result(): SqliteResult {
+        $stmt = $this->pdo->prepare(SqliteConnection::translate($this->sql));
+        $stmt->execute($this->params);
+        return new SqliteResult($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+}
+
+class SqliteConnection {
+    private PDO $pdo;
+    public int $insert_id = 0;
+    public function __construct(string $path) {
+        $dir = dirname($path);
+        if (!is_dir($dir)) mkdir($dir, 0775, true);
+        $this->pdo = new PDO('sqlite:' . $path);
+        $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->initialize($path);
+    }
+    private function initialize(string $path): void {
+        $exists = file_exists($path) && filesize($path) > 0;
+        if ($exists) return;
+        $schema = __DIR__ . '/database.sqlite.sql';
+        if (is_file($schema)) $this->pdo->exec(file_get_contents($schema));
+    }
+    public static function translate(string $sql): string {
+        $sql = preg_replace('/CURDATE\(\)/i', "date('now','localtime')", $sql);
+        $sql = preg_replace_callback('/DATE_ADD\(([^,]+),INTERVAL\s+(\d+)\s+DAY\)/i', function ($m) {
+            return "date(" . trim($m[1]) . ", '+" . $m[2] . " days')";
+        }, $sql);
+        return $sql;
+    }
+    public function prepare(string $sql): SqliteStatement {
+        return new SqliteStatement($this->pdo, $this, $sql);
+    }
+    public function query(string $sql): SqliteResult {
+        $stmt = $this->pdo->query(self::translate($sql));
+        return new SqliteResult($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+    public function get_last_insert_id(): int {
+        return (int)$this->pdo->lastInsertId();
+    }
+}
+
+$DB_PATH = getenv('DB_PATH') ?: __DIR__ . '/data/job_portal.sqlite';
 try {
-    $conn = new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
-    $conn->set_charset('utf8mb4');
+    $conn = new SqliteConnection($DB_PATH);
+    $conn->insert_id = 0;
 } catch (Exception $ex) {
-    die('Database connection failed. Check config.php and make sure database.sql was imported.');
+    die('Database connection failed: ' . e($ex->getMessage()));
 }
 
 function e($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
